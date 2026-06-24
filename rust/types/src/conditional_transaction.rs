@@ -1,12 +1,12 @@
 use std::collections::BTreeSet;
 
+use chroma_api_types::{OccReadMode, OccReadToken};
 use chroma_error::{ChromaError, ErrorCodes};
 use thiserror::Error;
 
 use crate::{
     AddCollectionRecordsRequest, DeleteCollectionRecordsRequest, GetRequest, GetResponse,
-    OccReadMode, OccReadToken, Operation, UpdateCollectionRecordsRequest,
-    UpsertCollectionRecordsRequest,
+    Operation, UpdateCollectionRecordsRequest, UpsertCollectionRecordsRequest,
 };
 
 /// One buffered write operation in transaction call order.
@@ -505,7 +505,7 @@ mod tests {
 
     use crate::{
         CollectionUuid, Include, IncludeList, MetadataComparison, MetadataExpression,
-        MetadataValue, OccReadMode, PrimitiveOperator, Where,
+        MetadataValue, PrimitiveOperator, Where,
     };
 
     use super::*;
