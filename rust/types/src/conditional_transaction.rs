@@ -59,7 +59,8 @@ impl ConditionalCommitRequest {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct ConditionalCommitResult {
     pub first_inserted_record_offset: Option<i64>,
     pub record_count: usize,
@@ -238,6 +239,15 @@ impl ConditionalTransactionState {
             Some(read_token) => request.with_occ_read_token(read_token),
             None => request.with_occ_read_token_generation(),
         })
+    }
+
+    pub fn prepare_get_request_with_read_token(
+        &self,
+        request: GetRequest,
+        read_token: OccReadToken,
+    ) -> Result<GetRequest, ConditionalTransactionError> {
+        self.validate_get_request(&request)?;
+        Ok(request.with_occ_read_token(read_token))
     }
 
     pub fn finish_get(
@@ -439,6 +449,10 @@ pub enum ConditionalTransactionError {
     DuplicateBufferedWrite { id: String },
     #[error("transactional writes do not support operation {operation:?}")]
     UnsupportedWriteOperation { operation: Operation },
+    #[error(
+        "conditional transactions require the gRPC log implementation; configured log is {implementation}"
+    )]
+    UnsupportedLogImplementation { implementation: String },
     #[error("transactional get response did not include an OCC read token")]
     MissingReadToken,
     #[error(
@@ -464,7 +478,8 @@ impl ChromaError for ConditionalTransactionError {
             | ConditionalTransactionError::DeleteRequiresKnownPresent { .. }
             | ConditionalTransactionError::DuplicateWriteIdInRequest { .. }
             | ConditionalTransactionError::DuplicateBufferedWrite { .. }
-            | ConditionalTransactionError::UnsupportedWriteOperation { .. } => {
+            | ConditionalTransactionError::UnsupportedWriteOperation { .. }
+            | ConditionalTransactionError::UnsupportedLogImplementation { .. } => {
                 ErrorCodes::InvalidArgument
             }
             ConditionalTransactionError::MissingReadToken
