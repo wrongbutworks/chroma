@@ -48,11 +48,11 @@ use chroma_types::{
     IndexStatusResponse, KnnIndex, ListCollectionsRequest, ListCollectionsResponse,
     ListDatabasesError, ListDatabasesRequest, ListDatabasesResponse, Operation, OperationRecord,
     QueryError, QueryRequest, QueryResponse, ResetError, ResetResponse, Schema, SearchRequest,
-    SearchResponse, SegmentType, UpdateCollectionError,
-    UpdateCollectionRecordsError, UpdateCollectionRecordsRequest, UpdateCollectionRecordsResponse,
-    UpdateCollectionRequest, UpdateCollectionResponse, UpdateTenantError, UpdateTenantRequest,
-    UpdateTenantResponse, UpsertCollectionRecordsError, UpsertCollectionRecordsRequest,
-    UpsertCollectionRecordsResponse, Where,
+    SearchResponse, SegmentType, UpdateCollectionError, UpdateCollectionRecordsError,
+    UpdateCollectionRecordsRequest, UpdateCollectionRecordsResponse, UpdateCollectionRequest,
+    UpdateCollectionResponse, UpdateTenantError, UpdateTenantRequest, UpdateTenantResponse,
+    UpsertCollectionRecordsError, UpsertCollectionRecordsRequest, UpsertCollectionRecordsResponse,
+    Where,
 };
 use opentelemetry::global;
 use opentelemetry::metrics::Counter;
