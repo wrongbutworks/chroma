@@ -116,6 +116,7 @@ impl FoundationConfig {
             "slack".to_string(),
             "notion".to_string(),
             "gdrive".to_string(),
+            "granola".to_string(),
         ]
     }
     fn default_function_name() -> String {
