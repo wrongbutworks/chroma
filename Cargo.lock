@@ -3677,6 +3677,7 @@ dependencies = [
  "httpmock",
  "mdac",
  "opentelemetry",
+ "proptest",
  "regex",
  "reqwest 0.13.2",
  "rmcp",
