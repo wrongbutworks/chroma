@@ -38,6 +38,139 @@ pub struct TrajectoryWriteResponse {
     pub first_inserted_record_offset: Option<i64>,
 }
 
+impl TrajectoryWriteResponse {
+    fn from_commit(
+        trajectory_id: Uuid,
+        write_state: WriteState,
+        entry_count: usize,
+        commit: ConditionalCommitResult,
+    ) -> Self {
+        Self {
+            trajectory_id,
+            write_state,
+            entry_count,
+            record_count: commit.record_count,
+            first_inserted_record_offset: commit.first_inserted_record_offset,
+        }
+    }
+}
+
+/// Save a complete trajectory as finalized records in one transaction.
+///
+/// This is an overwrite/upsert operation for backfills, reprocessing, and
+/// one-shot imports. Use [`create_open_generate_trajectory`] plus appends for
+/// live incremental writes.
+pub async fn save_generate_trajectory(
+    collection: &ChromaCollection,
+    file: &GenerateTrajectoryFile,
+) -> Result<TrajectoryWriteResponse, TrajectoryError> {
+    let mut txn = collection.conditional();
+    chroma_save_generate_trajectory(&mut txn, file).await?;
+    let commit = txn.commit().await?;
+    Ok(TrajectoryWriteResponse::from_commit(
+        file.trajectory.id,
+        WriteState::Finalized,
+        file.trajectory.actions_and_observations.len(),
+        commit,
+    ))
+}
+
+/// Create an open trajectory with zero committed entries.
+///
+/// The supplied [`GenerateTrajectoryFile`] must already be an open skeleton:
+/// `trajectory.actions_and_observations` must be empty. The API deliberately
+/// does not strip entries from the body. If the caller has a complete file, use
+/// [`save_generate_trajectory`] instead.
+pub async fn create_open_generate_trajectory(
+    collection: &ChromaCollection,
+    file: &GenerateTrajectoryFile,
+) -> Result<TrajectoryWriteResponse, TrajectoryError> {
+    let mut txn = collection.conditional();
+    chroma_create_open_trajectory(&mut txn, file).await?;
+    let commit = txn.commit().await?;
+    Ok(TrajectoryWriteResponse::from_commit(
+        file.trajectory.id,
+        WriteState::Open,
+        0,
+        commit,
+    ))
+}
+
+/// Append complete entries to an open trajectory.
+///
+/// The append is conditional on `request.expected_entry_index` matching the
+/// stored open header's entry count. A stale expectation fails with a
+/// precondition error instead of being retried inside the server.
+pub async fn append_open_generate_trajectory(
+    collection: &ChromaCollection,
+    tid: Uuid,
+    request: &AppendTrajectoryEntriesRequest,
+) -> Result<TrajectoryWriteResponse, TrajectoryError> {
+    if request.entries.is_empty() {
+        return Err(TrajectoryError::EmptyAppend { tid });
+    }
+
+    let mut txn = collection.conditional();
+    let next_entry = chroma_extend_open_trajectory_at(
+        &mut txn,
+        tid,
+        request.expected_entry_index,
+        &request.entries,
+    )
+    .await?;
+    let commit = txn.commit().await?;
+    Ok(TrajectoryWriteResponse::from_commit(
+        tid,
+        WriteState::Open,
+        next_entry,
+        commit,
+    ))
+}
+
+/// Finalize an existing open trajectory using a complete final file.
+///
+/// The path UUID and body UUID must match, and the stored entry count must
+/// equal the number of entries in `file`. If a caller wants to write a complete
+/// trajectory without first appending every entry, use
+/// [`save_generate_trajectory`].
+pub async fn finalize_open_generate_trajectory(
+    collection: &ChromaCollection,
+    tid: Uuid,
+    file: &GenerateTrajectoryFile,
+) -> Result<TrajectoryWriteResponse, TrajectoryError> {
+    if file.trajectory.id != tid {
+        return Err(TrajectoryError::IdMismatch {
+            path: tid,
+            body: file.trajectory.id,
+        });
+    }
+
+    let mut txn = collection.conditional();
+    chroma_finalize_open_trajectory(&mut txn, file).await?;
+    let commit = txn.commit().await?;
+    Ok(TrajectoryWriteResponse::from_commit(
+        tid,
+        WriteState::Finalized,
+        file.trajectory.actions_and_observations.len(),
+        commit,
+    ))
+}
+
+/// Load a trajectory by UUID.
+///
+/// Set `require_finalized` to reject open trajectories. The default HTTP read
+/// route leaves this false so callers can inspect a live partial trajectory.
+pub async fn load_generate_trajectory(
+    collection: &ChromaCollection,
+    tid: Uuid,
+    require_finalized: bool,
+) -> Result<GenerateTrajectoryFile, TrajectoryError> {
+    let mut txn = collection.conditional();
+    let file = chroma_load_generate_trajectory(&mut txn, tid, require_finalized).await?;
+    let _ = txn.commit().await?;
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -190,137 +323,4 @@ mod tests {
         );
         assert_eq!(error.code(), ErrorCodes::InvalidArgument);
     }
-}
-
-impl TrajectoryWriteResponse {
-    fn from_commit(
-        trajectory_id: Uuid,
-        write_state: WriteState,
-        entry_count: usize,
-        commit: ConditionalCommitResult,
-    ) -> Self {
-        Self {
-            trajectory_id,
-            write_state,
-            entry_count,
-            record_count: commit.record_count,
-            first_inserted_record_offset: commit.first_inserted_record_offset,
-        }
-    }
-}
-
-/// Save a complete trajectory as finalized records in one transaction.
-///
-/// This is an overwrite/upsert operation for backfills, reprocessing, and
-/// one-shot imports. Use [`create_open_generate_trajectory`] plus appends for
-/// live incremental writes.
-pub async fn save_generate_trajectory(
-    collection: &ChromaCollection,
-    file: &GenerateTrajectoryFile,
-) -> Result<TrajectoryWriteResponse, TrajectoryError> {
-    let mut txn = collection.conditional();
-    chroma_save_generate_trajectory(&mut txn, file).await?;
-    let commit = txn.commit().await?;
-    Ok(TrajectoryWriteResponse::from_commit(
-        file.trajectory.id,
-        WriteState::Finalized,
-        file.trajectory.actions_and_observations.len(),
-        commit,
-    ))
-}
-
-/// Create an open trajectory with zero committed entries.
-///
-/// The supplied [`GenerateTrajectoryFile`] must already be an open skeleton:
-/// `trajectory.actions_and_observations` must be empty. The API deliberately
-/// does not strip entries from the body. If the caller has a complete file, use
-/// [`save_generate_trajectory`] instead.
-pub async fn create_open_generate_trajectory(
-    collection: &ChromaCollection,
-    file: &GenerateTrajectoryFile,
-) -> Result<TrajectoryWriteResponse, TrajectoryError> {
-    let mut txn = collection.conditional();
-    chroma_create_open_trajectory(&mut txn, file).await?;
-    let commit = txn.commit().await?;
-    Ok(TrajectoryWriteResponse::from_commit(
-        file.trajectory.id,
-        WriteState::Open,
-        0,
-        commit,
-    ))
-}
-
-/// Append complete entries to an open trajectory.
-///
-/// The append is conditional on `request.expected_entry_index` matching the
-/// stored open header's entry count. A stale expectation fails with a
-/// precondition error instead of being retried inside the server.
-pub async fn append_open_generate_trajectory(
-    collection: &ChromaCollection,
-    tid: Uuid,
-    request: &AppendTrajectoryEntriesRequest,
-) -> Result<TrajectoryWriteResponse, TrajectoryError> {
-    if request.entries.is_empty() {
-        return Err(TrajectoryError::EmptyAppend { tid });
-    }
-
-    let mut txn = collection.conditional();
-    let next_entry = chroma_extend_open_trajectory_at(
-        &mut txn,
-        tid,
-        request.expected_entry_index,
-        &request.entries,
-    )
-    .await?;
-    let commit = txn.commit().await?;
-    Ok(TrajectoryWriteResponse::from_commit(
-        tid,
-        WriteState::Open,
-        next_entry,
-        commit,
-    ))
-}
-
-/// Finalize an existing open trajectory using a complete final file.
-///
-/// The path UUID and body UUID must match, and the stored entry count must
-/// equal the number of entries in `file`. If a caller wants to write a complete
-/// trajectory without first appending every entry, use
-/// [`save_generate_trajectory`].
-pub async fn finalize_open_generate_trajectory(
-    collection: &ChromaCollection,
-    tid: Uuid,
-    file: &GenerateTrajectoryFile,
-) -> Result<TrajectoryWriteResponse, TrajectoryError> {
-    if file.trajectory.id != tid {
-        return Err(TrajectoryError::IdMismatch {
-            path: tid,
-            body: file.trajectory.id,
-        });
-    }
-
-    let mut txn = collection.conditional();
-    chroma_finalize_open_trajectory(&mut txn, file).await?;
-    let commit = txn.commit().await?;
-    Ok(TrajectoryWriteResponse::from_commit(
-        tid,
-        WriteState::Finalized,
-        file.trajectory.actions_and_observations.len(),
-        commit,
-    ))
-}
-
-/// Load a trajectory by UUID.
-///
-/// Set `require_finalized` to reject open trajectories. The default HTTP read
-/// route leaves this false so callers can inspect a live partial trajectory.
-pub async fn load_generate_trajectory(
-    collection: &ChromaCollection,
-    tid: Uuid,
-    require_finalized: bool,
-) -> Result<GenerateTrajectoryFile, TrajectoryError> {
-    let mut txn = collection.conditional();
-    let file = chroma_load_generate_trajectory(&mut txn, tid, require_finalized).await?;
-    let _ = txn.commit().await?;
-    Ok(file)
 }
