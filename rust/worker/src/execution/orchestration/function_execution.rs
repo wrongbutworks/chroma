@@ -43,7 +43,7 @@ pub struct FunctionExecutionContext {
 }
 
 fn has_reached_queue_frontier(completion_offset: i64, queue_compaction_offset: i64) -> bool {
-    queue_compaction_offset > 0 && completion_offset >= queue_compaction_offset
+    queue_compaction_offset > 0 && completion_offset > queue_compaction_offset
 }
 
 impl FunctionExecutionContext {
@@ -253,7 +253,12 @@ mod tests {
     }
 
     #[test]
-    fn positive_queue_frontier_still_treats_equality_as_complete() {
-        assert!(has_reached_queue_frontier(40, 40));
+    fn equality_does_not_treat_queue_frontier_as_complete() {
+        assert!(!has_reached_queue_frontier(40, 40));
+    }
+
+    #[test]
+    fn positive_queue_frontier_requires_advancing_past_completion() {
+        assert!(has_reached_queue_frontier(41, 40));
     }
 }
