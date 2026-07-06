@@ -395,7 +395,8 @@ mod tests {
                 .await
                 .expect("Failed to finish work");
 
-            // Get work - this branch still re-enqueues repair work into the queue.
+            // Get work - the queued entry should remain visible until completion
+            // advances past the stored queue frontier.
             let work_items = ctx
                 .work_queue_client
                 .get_work("test_shard".to_string(), 10)
@@ -407,8 +408,8 @@ mod tests {
                 work_items.items.len()
             );
 
-            // The queued entry is removed because completion advanced beyond the
-            // stored queue frontier on this branch.
+            // The queued entry stays alive because completion has not yet advanced
+            // beyond the stored queue frontier.
             let our_items: Vec<_> = work_items
                 .items
                 .iter()
@@ -417,9 +418,11 @@ mod tests {
 
             assert_eq!(
                 our_items.len(),
-                0,
-                "Expected no visible work item once finish_work advances past the queued frontier"
+                1,
+                "Expected the queue item to remain visible until completion passes the queued frontier"
             );
+            assert_eq!(our_items[0].completion_offset, new_offset);
+            assert_eq!(our_items[0].compaction_offset, advanced_log_position);
 
             // Check invocation status via sysdb
             let status_response = ctx
