@@ -331,7 +331,7 @@ impl Orchestrator for LogFetchOrchestrator {
         &mut self,
         ctx: &ComponentContext<Self>,
     ) -> Vec<(TaskMessage, Option<Span>)> {
-        if self.context.is_fn_consumer {
+        if self.context.is_fn_consumer && self.attached_function_id_filter.is_some() {
             vec![(
                 wrap(
                     Box::new(GetAttachedFunctionOperator::new(
@@ -617,20 +617,35 @@ impl Handler<TaskResult<GetCollectionAndSegmentsOutput, GetCollectionAndSegments
         let mut log_upper_bound_offset = None;
 
         if self.context.is_fn_consumer {
-            let completion_offset = match self.resolved_attached_functions.as_ref() {
-                Some(attached_functions) if attached_functions.len() == 1 => {
-                    attached_functions[0].completion_offset as i64
-                }
-                _ => {
-                    self.terminate_with_result(
-                        Err(LogFetchOrchestratorError::InvariantViolation(
-                            "fn-consumer log fetch requires resolved attached function state",
-                        )),
-                        ctx,
-                    )
-                    .await;
-                    return;
-                }
+            let completion_offset = match self.attached_function_id_filter {
+                Some(_) => match self.resolved_attached_functions.as_ref() {
+                    Some(attached_functions) if attached_functions.len() == 1 => {
+                        attached_functions[0].completion_offset as i64
+                    }
+                    _ => {
+                        self.terminate_with_result(
+                            Err(LogFetchOrchestratorError::InvariantViolation(
+                                "fn-consumer log fetch requires resolved attached function state",
+                            )),
+                            ctx,
+                        )
+                        .await;
+                        return;
+                    }
+                },
+                None => match self.context.log_start_offset {
+                    Some(offset) => offset,
+                    None => {
+                        self.terminate_with_result(
+                            Err(LogFetchOrchestratorError::InvariantViolation(
+                                "fn-consumer log fetch requires log_start_offset",
+                            )),
+                            ctx,
+                        )
+                        .await;
+                        return;
+                    }
+                },
             };
             self.context.log_start_offset = Some(completion_offset);
 
