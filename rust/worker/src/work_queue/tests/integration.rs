@@ -422,7 +422,10 @@ mod tests {
                 "Expected the queue item to remain visible until completion passes the queued frontier"
             );
             assert_eq!(our_items[0].completion_offset, new_offset);
-            assert_eq!(our_items[0].compaction_offset, advanced_log_position);
+            assert_eq!(
+                our_items[0].compaction_offset,
+                Some(advanced_log_position)
+            );
 
             // Check invocation status via sysdb
             let status_response = ctx
