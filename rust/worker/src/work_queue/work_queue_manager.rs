@@ -17,6 +17,7 @@ use chroma_types::{AttachedFunctionUuid, CollectionUuid};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::oneshot;
+use tonic::Code;
 
 // Message types
 #[derive(Debug)]
@@ -239,11 +240,25 @@ impl WorkQueueManager {
             new_completion_offset: completion_offset as u64,
         };
 
-        self.sysdb
+        match self
+            .sysdb
             .try_finish_async_attached_function_invocation(request)
             .await
-            .map_err(|e| WorkQueueError::TryFinishFailed(e.message().to_string()))?;
-        Ok(())
+        {
+            Ok(_) => Ok(()),
+            Err(status) if status.code() == Code::NotFound => {
+                tracing::info!(
+                    fn_id = %fn_id,
+                    input_coll_id = %input_coll_id,
+                    completion_offset,
+                    "Ignoring missing async invocation during finish because work queue cleanup is idempotent"
+                );
+                Ok(())
+            }
+            Err(status) => Err(WorkQueueError::TryFinishFailed(
+                status.message().to_string(),
+            )),
+        }
     }
 
     #[tracing::instrument(
@@ -698,6 +713,18 @@ mod tests {
 
         assert_eq!(manager.state.count_entries_missing_compaction_offset(), 0);
         assert_eq!(manager.state.pending_work[0].compaction_offset, 140);
+    }
+
+    #[tokio::test]
+    async fn test_try_finish_invocation_ignores_missing_attached_function() {
+        let (mut manager, _temp_dir) = create_test_manager().await;
+        let fn_id = AttachedFunctionUuid(Uuid::new_v4());
+        let coll_id = CollectionUuid(Uuid::new_v4());
+
+        manager
+            .try_finish_invocation(&fn_id, &coll_id, 101)
+            .await
+            .expect("missing attached functions should not block queue cleanup");
     }
 
     #[tokio::test]
